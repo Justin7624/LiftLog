@@ -1,20 +1,79 @@
-/* minimal styles (unchanged from previous builds) */
-:root{--bg:#0e0f12;--card:#16171c;--ink:#e8e9ef;--ink-2:#b8b9c2;--brand:#63e6be;--warn:#ff6b6b;--ok:#74c0fc;--shadow:0 10px 30px rgba(0,0,0,.35);--muted:#8a8d98}
-*{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;line-height:1.45}
-h1,h2,h3{margin:.25rem 0 .5rem}small{color:var(--ink-2)}
-.topbar{position:sticky;top:0;z-index:10;background:#0c0d10;border-bottom:1px solid #1f2026;padding:.5rem .75rem}
-.brand{display:flex;align-items:center;gap:.5rem}.brand h1{font-size:1.2rem;margin:0}.logo{font-size:1.2rem}
-.tabs{display:flex;overflow:auto;gap:.5rem;margin-top:.5rem}.tab{background:#191a20;border:1px solid #23242b;color:var(--ink);padding:.5rem .7rem;border-radius:12px;cursor:pointer;white-space:nowrap}.tab.active{background:var(--brand);border-color:var(--brand);color:#07110e;font-weight:600}
-main{padding:1rem;max-width:1100px;margin:0 auto}.panel{display:none}.panel.active{display:block}
-.grid{display:grid;gap:1rem;grid-template-columns:1fr}.grid2{display:grid;gap:.75rem;grid-template-columns:1fr 1fr}
-@media(min-width:800px){.grid{grid-template-columns:repeat(2,1fr)}.grid .stretch{grid-column:span 2}}
-.card{background:var(--card);border:1px solid #1f2026;border-radius:16px;box-shadow:var(--shadow);overflow:hidden}
-.card-head{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.75rem .9rem;border-bottom:1px solid #22232a}.card-body{padding:.9rem}
-.row{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}.spacer{flex:1}
-input,select,button{font:inherit;color:inherit}input,select{background:#101117;border:1px solid #24262f;border-radius:10px;padding:.55rem .7rem;color:var(--ink);min-width:140px}input[type=date]{min-width:unset}
-.btn{background:#191a20;border:1px solid #23242b;border-radius:10px;padding:.55rem .8rem;cursor:pointer}.btn.primary{background:var(--brand);border-color:var(--brand);color:#06110d;font-weight:600}.btn.warn{background:#241416;border-color:#3a1e22;color:#ffb3b3}.btn:disabled{opacity:.6;cursor:not-allowed}
-.muted{color:var(--muted)}.streak{font-weight:700}.badges{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.5rem}.badge{background:#19231e;border:1px solid #1e2a23;border-radius:999px;padding:.25rem .6rem;color:#9bf0c3;font-size:.9rem}
-#sets .set{display:grid;gap:.5rem;background:#121318;border:1px dashed #262833;border-radius:12px;padding:.75rem;margin-bottom:.6rem;grid-template-columns:1fr 1fr 1fr 1fr auto}#sets .set input,#sets .set select{min-width:0}.superset{border-color:#2b2d3a}
-#historyList .item,#metricsList .item{border-bottom:1px solid #23242b;padding:.5rem 0}
-.demos{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.modal{min-width:min(800px,90vw);background:var(--card);border:1px solid #22232a;padding:.75rem;border-radius:12px}dialog::backdrop{background:rgba(0,0,0,.6)}.modal iframe{width:100%;aspect-ratio:16/9;border:0;border-radius:12px}
+/* LiftLog styles — mobile-first, responsive (imperial-only UI) */
+:root{
+  --bg:#0e0f12; --card:#16171c; --ink:#e8e9ef; --ink-2:#b8b9c2;
+  --brand:#63e6be; --brand-2:#3fc29a; --warn:#ff6b6b; --ok:#74c0fc;
+  --shadow:0 10px 30px rgba(0,0,0,.35); --muted:#8a8d98;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+  font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;line-height:1.45}
+h1,h2,h3{margin:.25rem 0 .5rem}
+small{color:var(--ink-2)}
+a{color:var(--ok);text-decoration:none}
+a:hover{text-decoration:underline}
+
+.topbar{position:sticky;top:0;z-index:10;background:#0c0d10;
+  border-bottom:1px solid #1f2026;padding:.5rem .75rem}
+.brand{display:flex;align-items:center;gap:.5rem}
+.brand h1{font-size:1.2rem;margin:0}
+.logo{font-size:1.2rem}
+
+.tabs{display:flex;overflow:auto;gap:.5rem;margin-top:.5rem}
+.tab{background:#191a20;border:1px solid #23242b;color:var(--ink);
+  padding:.5rem .7rem;border-radius:12px;cursor:pointer;white-space:nowrap}
+.tab.active{background:var(--brand);border-color:var(--brand);color:#07110e;font-weight:600}
+
+main{padding:1rem;max-width:1100px;margin:0 auto}
+.panel{display:none}
+.panel.active{display:block}
+
+.grid{display:grid;gap:1rem;grid-template-columns:1fr}
+.grid2{display:grid;gap:.75rem;grid-template-columns:1fr 1fr}
+@media(min-width:800px){
+  .grid{grid-template-columns:repeat(2,1fr)}
+  .grid .stretch{grid-column:span 2}
+}
+
+.card{background:var(--card);border:1px solid #1f2026;border-radius:16px;
+  box-shadow:var(--shadow);overflow:hidden}
+.card-head{display:flex;align-items:center;justify-content:space-between;
+  gap:.75rem;padding:.75rem .9rem;border-bottom:1px solid #22232a}
+.card-body{padding:.9rem}
+.row{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.spacer{flex:1}
+
+input,select,button{font:inherit;color:inherit}
+input,select{background:#101117;border:1px solid #24262f;border-radius:10px;
+  padding:.55rem .7rem;color:var(--ink);min-width:140px}
+input[type="date"]{min-width:unset}
+.btn{background:#191a20;border:1px solid #23242b;border-radius:10px;
+  padding:.55rem .8rem;cursor:pointer}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:#06110d;font-weight:600}
+.btn.warn{background:#241416;border-color:#3a1e22;color:#ffb3b3}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+
+.muted{color:var(--muted)}
+
+.streak{font-weight:700}
+.badges{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.5rem}
+.badge{background:#19231e;border:1px solid #1e2a23;border-radius:999px;padding:.25rem .6rem; color:#9bf0c3;font-size:.9rem}
+
+#sets .set{display:grid;gap:.5rem;background:#121318;border:1px dashed #262833;
+  border-radius:12px;padding:.75rem;margin-bottom:.6rem;grid-template-columns:1fr 1fr 1fr 1fr auto}
+#sets .set input, #sets .set select{min-width:0}
+.superset{border-color:#2b2d3a}
+
+#historyList .item{border-bottom:1px solid #23242b;padding:.5rem 0}
+#metricsList .item{border-bottom:1px solid #23242b;padding:.5rem 0}
+
+.demos{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
+.demo{background:#11131a;border:1px solid #22242e;border-radius:12px;padding:.5rem}
+.demo h4{margin:0 0 .25rem}
+.demo .row{justify-content:space-between}
+
+dialog::backdrop{background:rgba(0,0,0,.6)}
+.modal{min-width:min(800px, 90vw);background:var(--card);border:1px solid #22232a;
+  padding:.75rem;border-radius:12px}
+.modal iframe{width:100%;aspect-ratio:16/9;border:0;border-radius:12px;}
+
 .foot{padding:1rem;text-align:center;color:var(--muted)}
