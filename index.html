@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LiftLog — Simple, Private Workout Tracker</title>
+  <link rel="stylesheet" href="./style.css" />
+  <!-- Chart.js (no Recharts) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🏋️</span>
+      <h1>LiftLog</h1>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Main">
+      <button class="tab active" data-tab="dashboard" aria-selected="true">Dashboard</button>
+      <button class="tab" data-tab="workout">Log Workout</button>
+      <button class="tab" data-tab="metrics">Body Metrics</button>
+      <button class="tab" data-tab="calories">Calories</button>
+      <button class="tab" data-tab="templates">Templates</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- DASHBOARD -->
+    <section id="dashboard" class="panel active">
+      <div class="grid">
+        <section class="card stretch">
+          <header class="card-head">
+            <h2>Today</h2>
+            <div class="meta" id="todayMeta"></div>
+          </header>
+          <div class="card-body" id="todaySummary">
+            <p>No workout logged yet.</p>
+            <button class="btn primary" id="goLog">Log a workout</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <header class="card-head">
+            <h3>Streak & Badges</h3>
+          </header>
+          <div class="card-body">
+            <div id="streakBox" class="streak">🔥 0-day streak</div>
+            <div id="badges" class="badges"></div>
+          </div>
+        </section>
+
+        <!-- Analytics -->
+        <section class="card stretch">
+          <header class="card-head">
+            <h3>Total Volume / Week</h3>
+          </header>
+          <div class="card-body">
+            <canvas id="chartVolume"></canvas>
+          </div>
+        </section>
+
+        <section class="card">
+          <header class="card-head">
+            <h3>1RM Estimates</h3>
+            <small class="muted">1RM = One‑Rep Max (heaviest weight you can lift once, estimated).</small>
+          </header>
+          <div class="card-body">
+            <canvas id="chart1RM"></canvas>
+          </div>
+        </section>
+
+        <section class="card">
+          <header class="card-head">
+            <h3>Body Weight & Body Fat %</h3>
+            <small class="muted">Weight in lb; body fat in %.</small>
+          </header>
+          <div class="card-body">
+            <canvas id="chartBody"></canvas>
+          </div>
+        </section>
+
+        <section class="card stretch">
+          <header class="card-head">
+            <h3>PR History</h3>
+            <small class="muted">PR = Personal Record (your best/heaviest set per exercise).</small>
+          </header>
+          <div class="card-body">
+            <canvas id="chartPR"></canvas>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- WORKOUT LOG -->
+    <section id="workout" class="panel">
+      <form id="workoutForm" class="card">
+        <header class="card-head">
+          <h2>Log Workout</h2>
+          <div class="row">
+            <label>Date <input type="date" id="wDate" required></label>
+            <label>Title <input type="text" id="wTitle" placeholder="Upper A, Push, Legs..." required></label>
+            <label>Notes <input type="text" id="wNotes" placeholder="Feeling good, PR on bench..."></label>
+          </div>
+        </header>
+        <div class="card-body">
+          <div id="sets"></div>
+          <div class="row">
+            <button type="button" class="btn" id="addSet">+ Add Set</button>
+            <button type="button" class="btn" id="addSuperset">+ Add Superset</button>
+            <div class="spacer"></div>
+            <button type="submit" class="btn primary">Save Workout</button>
+          </div>
+        </div>
+      </form>
+
+      <section class="card">
+        <header class="card-head">
+          <h3>History</h3>
+          <div class="row">
+            <input id="historySearch" placeholder="Search exercise or note...">
+            <button class="btn" id="exportData">Export JSON</button>
+            <button class="btn warn" id="clearAll">Clear All Data</button>
+          </div>
+        </header>
+        <div class="card-body" id="historyList"></div>
+      </section>
+    </section>
+
+    <!-- BODY METRICS -->
+    <section id="metrics" class="panel">
+      <form id="metricsForm" class="card">
+        <header class="card-head"><h2>Body Metrics</h2></header>
+        <div class="card-body">
+          <div class="grid2">
+            <label>Height — Feet
+              <input type="number" step="1" id="mHeightFt" placeholder="e.g., 5">
+            </label>
+            <label>Height — Inches
+              <input type="number" step="0.1" id="mHeightIn" placeholder="e.g., 10">
+            </label>
+            <label>Weight (lb)
+              <input type="number" step="0.1" id="mWeightLb" placeholder="e.g., 175.0">
+            </label>
+            <label>Body Fat % (optional)
+              <input type="number" step="0.1" id="mBodyFat" placeholder="e.g., 18">
+            </label>
+            <label>Waist (in, optional)
+              <input type="number" step="0.1" id="mWaist">
+            </label>
+            <label>Hip (in, optional)
+              <input type="number" step="0.1" id="mHip">
+            </label>
+            <label>Chest (in, optional)
+              <input type="number" step="0.1" id="mChest">
+            </label>
+            <label>Resting HR (bpm, optional)
+              <input type="number" step="1" id="mRHR">
+            </label>
+            <label>Date
+              <input type="date" id="mDate">
+            </label>
+          </div>
+          <div class="row">
+            <button type="button" class="btn" id="calcBMR">Calc BMR/TDEE</button>
+            <div class="spacer"></div>
+            <button type="button" class="btn primary" id="saveMetrics">Save Entry</button>
+          </div>
+          <div id="bmrBox" class="muted"></div>
+        </div>
+      </form>
+
+      <section class="card">
+        <header class="card-head"><h3>Metrics History</h3></header>
+        <div class="card-body" id="metricsList"></div>
+      </section>
+    </section>
+
+    <!-- CALORIES -->
+    <section id="calories" class="panel">
+      <form id="calForm" class="card">
+        <header class="card-head">
+          <h2>Calories</h2>
+          <div class="row">
+            <label>Daily Calories <input type="number" id="caloriesInput" placeholder="e.g., 2200"></label>
+            <label>Activity Level
+              <select id="activityLevel">
+                <option value="sedentary">Sedentary</option>
+                <option value="light">Lightly Active</option>
+                <option value="moderate">Moderately Active</option>
+                <option value="very">Very Active</option>
+                <option value="athlete">Athlete</option>
+              </select>
+            </label>
+            <label>Goal
+              <select id="goal">
+                <option value="loss">Lose Weight</option>
+                <option value="maintain">Maintain</option>
+                <option value="gain">Gain Weight</option>
+              </select>
+            </label>
+          </div>
+        </header>
+        <div class="card-body">
+          <div id="projectionBox" class="muted">Enter height/weight/age/sex in Settings for better estimates.</div>
+          <button type="button" class="btn primary" id="estimateWeight">Estimate Weight Trend</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- TEMPLATES + DEMOS -->
+    <section id="templates" class="panel">
+      <section class="card">
+        <header class="card-head">
+          <h2>Workout Templates</h2>
+          <div class="row">
+            <button class="btn" data-template="fullbody">Full Body (Beginner)</button>
+            <button class="btn" data-template="ppl">Push / Pull / Legs</button>
+            <button class="btn" data-template="fives">5x5</button>
+            <button class="btn" data-template="phul">PHUL</button>
+          </div>
+        </header>
+        <div class="card-body">
+          <p>Select a template to copy into your workout form. You can edit everything before saving.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <header class="card-head"><h3>Exercise Demo Library</h3></header>
+        <div class="card-body demos" id="demoLibrary">
+          <!-- populated by JS -->
+        </div>
+      </section>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="settings" class="panel">
+      <form id="settingsForm" class="card">
+        <header class="card-head"><h2>Settings</h2></header>
+        <div class="card-body grid2">
+          <label>Sex
+            <select id="sSex">
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </label>
+          <label>Age
+            <input type="number" id="sAge" min="5" max="100">
+          </label>
+          <label>Height — Feet
+            <input type="number" id="sHeightFt" step="1">
+          </label>
+          <label>Height — Inches
+            <input type="number" id="sHeightIn" step="0.1">
+          </label>
+          <label>Weight (lb)
+            <input type="number" id="sWeightLb" step="0.1">
+          </label>
+          <label>Gamification
+            <select id="sGamify">
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </label>
+        </div>
+        <div class="card-body row">
+          <button type="button" class="btn primary" id="saveSettings">Save Settings</button>
+          <div class="spacer"></div>
+          <button type="button" class="btn warn" id="resetAll">Factory Reset</button>
+        </div>
+      </form>
+      <section class="card">
+        <header class="card-head"><h3>About Data</h3></header>
+        <div class="card-body">
+          <p>LiftLog stores data locally in your browser (localStorage). Export regularly if you care about backups. No account needed.</p>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <!-- Exercise Demo Modal -->
+  <dialog id="demoModal">
+    <div class="modal">
+      <header class="row">
+        <h3 id="demoTitle">Exercise Demo</h3>
+        <button id="closeDemo" class="btn">Close</button>
+      </header>
+      <div id="demoContent"></div>
+    </div>
+  </dialog>
+
+  <footer class="foot">
+    <small>© <span id="year"></span> LiftLog — Privacy-first fitness tracker.</small>
+  </footer>
+</body>
+</html>
