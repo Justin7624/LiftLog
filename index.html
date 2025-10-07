@@ -272,8 +272,16 @@
         <div class="card-body grid2">
           <label>Body Weight Goal (lb) <input type="number" step="0.1" id="gWeight"></label>
           <label>Target Date <input type="date" id="gDate"></label>
-          <label>Lift Goal: Exercise <input type="text" id="gLiftName" placeholder="e.g., Bench Press"></label>
-          <label>Lift Goal: 1RM (lb) <input type="number" step="1" id="gLift1RM"></label>
+         
+          <!-- Multi lift goals -->
+          <div class="full">
+            <div class="row" style="justify-content: space-between; align-items:center">
+              <h4 style="margin:0">Lift Goals</h4>
+              <button type="button" class="btn" id="addLiftGoal">+ Add Lift Goal</button>
+            </div>
+            <div id="liftGoals" class="stack" style="margin-top:.5rem"></div>
+            <small class="muted">Add one or more lifts you want to reach a target 1RM for.</small>
+          </div>
         </div>
         <div class="card-body row">
           <button type="button" class="btn primary" id="saveGoals">Save Goals</button>
