@@ -1,6 +1,5 @@
-/* app.phase2.js — Phase 2: Coach, Goals, Community (smarter generator)
+/* app.phase2.js — Phase 2: Coach, Goals (multi-lift), Community + smarter generator
    Depends on app.core.js, app.workouts.js, app.analytics.js
-   Note: uses Chart.js adapter elsewhere; not required here.
 */
 (function () {
   const { $, $$, fmt, todayISO, parseNum, state, write, read, KEYS, emit, on } =
@@ -16,7 +15,6 @@
       h = Math.imul(h, 16777619);
     }
     return () => {
-      // xorshift32-ish
       h ^= h << 13; h >>>= 0;
       h ^= h >>> 17; h >>>= 0;
       h ^= h << 5;  h >>>= 0;
@@ -28,7 +26,6 @@
   // ---------------------------------------
   // EXERCISE POOLS (by equipment & group)
   // ---------------------------------------
-  // Simple taxonomy: Squat, Hinge, Horizontal Push/Pull, Vertical Push/Pull, Accessory/Core, Conditioning
   const POOLS = {
     barbell: {
       squat: ['Back Squat', 'Front Squat', 'Paused Squat'],
@@ -65,7 +62,7 @@
     }
   };
 
-  // Rep schemes by goal (we rotate across days)
+  // Rep schemes by goal (rotate across days)
   const SCHEMES = {
     strength: [
       { sets: 5, reps: 5, rpe: 8 },
@@ -85,7 +82,7 @@
   };
 
   // ---------------------------------------
-  // READINESS (reuse for generation too)
+  // READINESS (also used by generator)
   // ---------------------------------------
   const GROUPS = ['Chest', 'Back', 'Legs', 'Arms', 'Core'];
   function calcReadiness() {
@@ -144,8 +141,6 @@
     if (days >= 5) return ['Push', 'Pull', 'Legs', 'Upper', 'Lower', 'Full'].slice(0, days);
     return ['Full'];
   }
-
-  // Map split to target groups (used with readiness weighting)
   const SPLIT_TARGETS = {
     Full: ['Legs', 'Chest', 'Back', 'Core', 'Arms'],
     Upper: ['Chest', 'Back', 'Arms', 'Core'],
@@ -166,7 +161,6 @@
     const pools = POOLS[equip] || POOLS.barbell;
     const schemes = SCHEMES[goal] || SCHEMES.general;
 
-    // seed: year-week => stable weekly plan
     const now = new Date();
     const yearStart = new Date(now.getFullYear(), 0, 1);
     const week = Math.ceil((now - yearStart) / 86400000 / 7);
@@ -179,15 +173,12 @@
       const dayIdx = i % schemes.length;
       const scheme = schemes[dayIdx];
 
-      // choose groups to emphasize, de-prioritize fatigued (<0.6)
       const targets = (SPLIT_TARGETS[slot] || ['Legs', 'Chest', 'Back']).slice();
       targets.sort((a, b) => (readiness[b] ?? 1) - (readiness[a] ?? 1)); // fresh first
 
-      // choose main patterns from targets
       const picks = [];
       const use = (groupName) => {
         if (groupName === 'Legs') {
-          // squat or hinge
           picks.push(pick(rng, pools.squat));
           picks.push(pick(rng, pools.hinge));
         } else if (groupName === 'Chest') {
@@ -201,19 +192,14 @@
           picks.push(pick(rng, pools.core));
         }
       };
-      // Take top 2–3 most ready groups for the day
       targets.slice(0, Math.min(3, targets.length)).forEach(use);
 
-      // conditioning bonus for weight loss/general
       if (goal !== 'strength' && rng() < 0.8) picks.push(pick(rng, pools.cond));
 
-      // De-duplicate, cap 5–6 items
       const unique = Array.from(new Set(picks)).slice(0, 6);
 
-      // Format items into display + structured sets
       const list = unique.map((name) => {
         if (name.includes('(sec)') || name.includes('(m)') || name.includes('Intervals')) {
-          // timed / conditioning
           const t = goal === 'loss' ? 3 : 2;
           const dur = name.includes('(m)') ? `${goal === 'loss' ? 5 : 4}x2m` : `${t}x60s`;
           return `${name.replace(/\s*\(.*\)/, '')} ${dur}`;
@@ -250,11 +236,8 @@
 
   $('#genPlan')?.addEventListener('click', genPlan);
 
-  // ---------------------------------------
-  // LOAD TODAY -> populate workout form
-  // ---------------------------------------
+  // Load Today's Plan -> populates Workout editor
   function parseDisplayLine(line) {
-    // "Bench Press 5x5" -> {name, sets, reps}; "Plank (sec) 3x60s" -> reps "60"
     const m = line.match(/^(.*?)(?:\s+(\d+)x(\d+)(?:s|m)?)?$/i);
     if (!m) return { name: line };
     const name = m[1].trim();
@@ -262,7 +245,6 @@
     const reps = m[3] ? Number(m[3]) : 10;
     return { name, sets, reps };
   }
-
   function addRowToEditor(name, reps) {
     const setsBox = $('#sets');
     if (!setsBox) return;
@@ -278,28 +260,23 @@
     root.querySelector('[data-del]').addEventListener('click', () => root.remove());
     setsBox.appendChild(root);
   }
-
   $('#loadToday')?.addEventListener('click', () => {
     const p = state.plan;
     if (!p) return alert('No plan available. Generate one first.');
-    const i = Math.max(0, (new Date().getDay() % p.days) - 1); // Sun=0 -> Day 1
+    const i = Math.max(0, (new Date().getDay() % p.days) - 1);
     const day = p.arr[i] || p.arr[0];
-
-    // navigate to workout tab
     document.querySelector('[data-tab="workout"]')?.click();
     $('#wTitle') && ($('#wTitle').value = `Day ${day.day} — ${day.split}`);
     const setsBox = $('#sets');
     if (setsBox) setsBox.innerHTML = '';
-
     day.list.forEach((ln) => {
       const { name, reps } = parseDisplayLine(ln);
       addRowToEditor(name, reps || 10);
     });
-
     alert(`Loaded Day ${day.day} into the workout editor.`);
   });
 
-  // Auto-refresh weekly (new seed → new variety)
+  // Auto-refresh weekly
   (function autoRefreshPlan() {
     if (!state.plan?.created) return;
     const created = new Date(state.plan.created);
@@ -309,36 +286,70 @@
   })();
 
   // ---------------------------------------
-  // GOALS (with progress + dashboard link)
+  // GOALS — Multi lift goals editor + progress
   // ---------------------------------------
+  function blankLiftGoal() { return { name: '', target1RM: null }; }
+
+  function addLiftGoalRow(goal) {
+    const box = $('#liftGoals');
+    if (!box) return;
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.style.gap = '0.5rem';
+    row.innerHTML = `
+      <input type="text" class="gLiftName" placeholder="e.g., Bench Press" value="${goal.name || ''}" />
+      <input type="number" step="1" class="gLift1RM" placeholder="Target 1RM (lb)" value="${goal.target1RM ?? ''}" />
+      <button type="button" class="btn" data-del>Delete</button>
+    `;
+    row.querySelector('[data-del]').addEventListener('click', () => row.remove());
+    box.appendChild(row);
+  }
+
+  function renderLiftGoalsEditor() {
+    const box = $('#liftGoals');
+    if (!box) return;
+    box.innerHTML = '';
+    const lifts = (state.goals && state.goals.lifts) || [];
+    if (!lifts.length) lifts.push(blankLiftGoal());
+    lifts.forEach((g) => addLiftGoalRow(g));
+  }
+  $('#addLiftGoal')?.addEventListener('click', () => addLiftGoalRow(blankLiftGoal()));
+
   function saveGoals() {
-    const g = {
-      weight: parseNum($('#gWeight')?.value),
-      targetDate: $('#gDate')?.value,
-      liftName: $('#gLiftName')?.value,
-      lift1RM: parseNum($('#gLift1RM')?.value)
-    };
-    state.goals = g;
-    write(KEYS.goals, g);
+    // Body-weight goal
+    const weightGoal = parseNum($('#gWeight')?.value);
+    const targetDate = $('#gDate')?.value;
+
+    // Collect lift goals
+    const rows = $$('#liftGoals .row');
+    const lifts = rows.map((r) => {
+      const name = r.querySelector('.gLiftName')?.value?.trim() || '';
+      const target1RM = parseNum(r.querySelector('.gLift1RM')?.value);
+      return name && target1RM ? { name, target1RM } : null;
+    }).filter(Boolean);
+
+    state.goals = { weight: weightGoal, targetDate, lifts };
+    write(KEYS.goals, state.goals);
+
     updateGoalProgress();
-    emit('goals:updated', g);
+    emit('goals:updated', state.goals);
     alert('Goals saved.');
   }
+  $('#saveGoals')?.addEventListener('click', saveGoals);
 
   function updateGoalProgress() {
     const box = $('#goalsProgress');
     if (!box) return;
 
     const g = state.goals || {};
-    if (!g.weight && !g.lift1RM) {
+    const hasAnyLift = Array.isArray(g.lifts) && g.lifts.length > 0;
+    if (!g.weight && !hasAnyLift) {
       box.innerHTML = '<p class="muted">No goals yet.</p>';
       return;
     }
 
     const rows = [];
-    const last = state.metrics
-      .slice()
-      .sort((a, b) => b.date.localeCompare(a.date))[0];
+    const last = state.metrics.slice().sort((a, b) => b.date.localeCompare(a.date))[0];
     const weightNow = last?.weight ?? state.settings.weightLb;
 
     if (g.weight && g.targetDate) {
@@ -351,38 +362,42 @@
         `<div><strong>Weight Goal:</strong> ${fmt(weightNow)} → ${fmt(
           g.weight
         )} lb (${isFinite(pct) ? pct.toFixed(0) : 0}%)</div>
-      <div class="muted">${days} days left</div>`
+         <div class="muted">${days} days left</div>`
       );
       if (days <= 3) notifyGoal('Body Weight Goal almost due!');
     }
 
-    if (g.liftName && g.lift1RM) {
-      let best = 0;
+    if (hasAnyLift) {
+      const bestMap = {};
       state.workouts.forEach((w) =>
         (w.sets || []).forEach((s) => {
-          if (
-            (s.name || '').toLowerCase() === g.liftName.toLowerCase() &&
-            s.weight &&
-            s.reps
-          ) {
+          const nm = (s.name || '').trim().toLowerCase();
+          if (nm && s.weight && s.reps) {
             const est = s.weight * (1 + s.reps / 30);
-            best = Math.max(best, est);
+            bestMap[nm] = Math.max(bestMap[nm] || 0, est);
           }
         })
       );
-      const pct = (best / g.lift1RM) * 100;
-      rows.push(
-        `<div><strong>${g.liftName}:</strong> ${fmt(best)} → ${fmt(
-          g.lift1RM
-        )} lb (${isFinite(pct) ? pct.toFixed(0) : 0}%)</div>`
-      );
-      if (pct >= 95) notifyGoal(`${g.liftName} goal nearly achieved!`);
+
+      g.lifts.forEach(({ name, target1RM }) => {
+        const key = name.trim().toLowerCase();
+        const best = Math.round(bestMap[key] || 0);
+        const pct = target1RM ? Math.min(100, (best / target1RM) * 100) : 0;
+        rows.push(
+          `<div><strong>${name} 1RM:</strong> ${fmt(best)} → ${fmt(
+            target1RM
+          )} lb (${isFinite(pct) ? pct.toFixed(0) : 0}%)</div>
+           <div style="height:8px; background:#1f2026; border-radius:999px; overflow:hidden; margin:.35rem 0">
+             <div style="width:${isFinite(pct) ? pct.toFixed(0) : 0}%; height:100%"></div>
+           </div>`
+        );
+        if (pct >= 95) notifyGoal(`${name} goal nearly achieved!`);
+      });
     }
 
     box.innerHTML = rows.join('<br>') || '<p>No goals.</p>';
   }
   window.LL.updateGoalProgress = updateGoalProgress;
-  $('#saveGoals')?.addEventListener('click', saveGoals);
 
   async function notifyGoal(msg) {
     if (!('Notification' in window)) return;
@@ -450,6 +465,7 @@
   function boot() {
     renderPlanPreview();
     renderReadiness();
+    renderLiftGoalsEditor();
     updateGoalProgress();
     renderFeed();
   }
@@ -464,6 +480,9 @@
     renderPlanPreview();
     renderReadiness();
   });
-  on('panel:goals', updateGoalProgress);
+  on('panel:goals', () => {
+    renderLiftGoalsEditor();
+    updateGoalProgress();
+  });
   on('panel:community', renderFeed);
 })();
