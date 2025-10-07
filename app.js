@@ -1,15 +1,20 @@
-// LiftLog (imperial-only UI) — with scale-assisted BF%
-// NOTE: Wyze's exact algorithm is proprietary. This implements a transparent,
-// scale-assisted approach using Lean Body Mass (LBM) or Total Body Water (TBW),
-// with anthropometric fallbacks (Navy/YMCA/BMI). A calibration offset lets you
-// align estimates to your personal scale reading.
+// LiftLog (imperial-only UI) — v2 with Phase 2 features merged
+// - Scale-assisted BF% (Wyze-style: LBM/TBW + hydration + calibration)
+// - Anthropometric BF% fallback (Navy / YMCA / BMI)
+// - Charts: Volume/week, 1RM, Weight & BF%, PRs
+// - Calories & 8-week projections (weight + BF% path)
+// - Phase 2: AI Coach (rule-based), Muscle Readiness SVG, Goals, Community feed
+// NOTE: All units are pounds (lb) and inches (in). Height inputs are ft + in.
 
 const KEYS = {
   workouts: 'll.workouts',
   metrics: 'll.metrics',
   settings: 'll.settings',
   badges: 'll.badges',
-  migrated: 'll.migratedImperialV1'
+  migrated: 'll.migratedImperialV1',
+  goals: 'll.goals',
+  plan: 'll.plan',
+  community: 'll.community'
 };
 
 // ---------- utilities
@@ -21,6 +26,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 function read(key, fallback){ try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch(e){ return fallback; } }
 function write(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
 function fmt(n){ return (Math.round(n*100)/100).toLocaleString(); }
+function clampPct(p){ return Math.max(3, Math.min(60, p)); }
 
 // ---------- state
 let workouts = read(KEYS.workouts, []);
@@ -30,8 +36,13 @@ let settings = read(KEYS.settings, {
   preferScaleBF:'on', bfCalOffset: 0.0, ffmHydrationPct: 73
 });
 let badges = read(KEYS.badges, {});
+let goals = read(KEYS.goals, {});                // {weight, date, lift, lift1RM}
+let planState = read(KEYS.plan, null);           // array of day plans
+let community = read(KEYS.community, {           // simple local-only social prefs
+  name: '', optIn: 'off', feed: []
+});
 
-// ---------- migration from old metric data (one-time)
+// ---------- migrate from old metric settings if present
 (function migrateToImperial(){
   if(read(KEYS.migrated, false)) return;
   const old = read(KEYS.settings, null);
@@ -72,13 +83,14 @@ $$('.tab').forEach(btn => {
     $$('.panel').forEach(p=>p.classList.remove('active'));
     const id = btn.dataset.tab;
     $('#'+id).classList.add('active');
-    if(id === 'dashboard') renderDashboard();
+    if(id === 'dashboard') { renderDashboard(); renderCharts(); }
     if(id === 'metrics') renderMetrics();
+    if(id === 'goals') updateGoalProgress();
+    if(id === 'coach') { renderReadiness(); renderPlanPreview(); }
+    if(id === 'community') renderFeed();
   });
 });
-$('#goLog').addEventListener('click', () => {
-  $('[data-tab="workout"]').click();
-});
+$('#goLog').addEventListener('click', () => $('[data-tab="workout"]').click());
 $('#year').textContent = new Date().getFullYear();
 
 // ---------- Workout form
@@ -117,13 +129,13 @@ $('#workoutForm').addEventListener('submit', (e)=>{
   write(KEYS.workouts, workouts);
   maybeAwardBadgesAfterSave();
   setsBox.innerHTML=''; $('#wTitle').value=''; $('#wNotes').value=''; addSetRow(false);
-  renderHistory(); renderDashboard(); alert('Workout saved.');
+  renderHistory(); renderDashboard(); renderCharts(); alert('Workout saved.');
 });
 
 // history
 $('#historySearch').addEventListener('input', renderHistory);
 $('#exportData').addEventListener('click', ()=>{
-  const blob = new Blob([JSON.stringify({workouts, metrics, settings, badges}, null, 2)], {type:'application/json'});
+  const blob = new Blob([JSON.stringify({workouts, metrics, settings, badges, goals, community, plan: planState}, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'liftlog-export.json';
@@ -131,8 +143,10 @@ $('#exportData').addEventListener('click', ()=>{
 });
 $('#clearAll').addEventListener('click', ()=>{
   if(confirm('Clear ALL workouts & metrics? This cannot be undone.')){
-    workouts = []; metrics = []; badges = {}; write(KEYS.workouts, workouts); write(KEYS.metrics, metrics); write(KEYS.badges, badges);
-    renderHistory(); renderMetrics(); renderDashboard();
+    workouts = []; metrics = []; badges = {}; goals = {}; planState=null; community = {name:'',optIn:'off',feed:[]};
+    write(KEYS.workouts, workouts); write(KEYS.metrics, metrics); write(KEYS.badges, badges);
+    write(KEYS.goals, goals); write(KEYS.plan, planState); write(KEYS.community, community);
+    renderHistory(); renderMetrics(); renderDashboard(); renderCharts();
   }
 });
 
@@ -154,12 +168,13 @@ function renderHistory(){
   $('#historyList').innerHTML = out || '<p class="muted">No workouts yet.</p>';
 }
 
-// ---------- Helpers: latest metrics & BF estimators
+// ---------- helpers
 function latestMetrics(){
   const sorted = metrics.slice().sort((a,b)=>b.date.localeCompare(a.date));
   return sorted[0] || {};
 }
 
+// Anthropometric estimator (Navy/ YMCA/ BMI fallback) with calibration
 function estimateBF_Anthro(opts){
   // opts: {sex, age, heightInches, weightLb, waistIn, neckIn, hipIn}
   const sx = opts.sex || settings.sex;
@@ -189,34 +204,31 @@ function estimateBF_Anthro(opts){
   return clampPct(bf + (settings.bfCalOffset||0));
 }
 
+// Scale-assisted estimator emulating BIA logic using TBW or LBM
 function estimateBF_ScaleLike(inputs){
-  // Wyze-like: use LBM if provided; else infer FFM from TBW with hydration factor.
   // inputs: { weightLb, lbmLb, waterPct, musclePct }
   const w = inputs.weightLb;
   if (w == null) return null;
-  const hydration = Math.max(65, Math.min(80, Number(settings.ffmHydrationPct)||73)) / 100; // % -> fraction
+  let hydration = Math.max(65, Math.min(80, Number(settings.ffmHydrationPct)||73)) / 100; // % -> fraction
 
   if (inputs.lbmLb){
     return clampPct(100 * (1 - inputs.lbmLb / w) + (settings.bfCalOffset||0));
   }
   if (inputs.waterPct){
-    let h = hydration;
     if (inputs.musclePct != null){
       // Adjust hydration slightly with muscle % (muscle ~75% water)
       const mus = inputs.musclePct;
-      const adj = (mus - 40) * 0.0015; // +/- ~3% span over 20% range
-      h = Math.max(0.68, Math.min(0.78, h + adj));
+      const adj = (mus - 40) * 0.0015; // +/- ~3% span over ~20% range
+      hydration = Math.max(0.68, Math.min(0.78, hydration + adj));
     }
     const tbw = (inputs.waterPct/100) * w; // lb
-    const ffm = tbw / h; // lb
+    const ffm = tbw / hydration; // lb
     return clampPct(100 * (1 - ffm / w) + (settings.bfCalOffset||0));
   }
   return null;
 }
 
-function clampPct(p){ return Math.max(3, Math.min(60, p)); }
-
-// ---------- Metrics (forms & actions)
+// ---------- Metrics
 $('#mDate').value = todayISO();
 $('#calcBMR').addEventListener('click', ()=>{
   const hFt = parseNum($('#mHeightFt').value) ?? settings.heightFt;
@@ -271,6 +283,7 @@ $('#saveMetrics').addEventListener('click', ()=>{
     hip: parseNum($('#mHip').value),
     chest: parseNum($('#mChest').value),
     neck: parseNum($('#mNeck').value),
+    // scale-assisted fields
     lbmLb: parseNum($('#mLBMlb').value),
     waterPct: parseNum($('#mWaterPct').value),
     musclePct: parseNum($('#mMusclePct').value),
@@ -280,7 +293,7 @@ $('#saveMetrics').addEventListener('click', ()=>{
     rhr: parseNum($('#mRHR').value)
   };
   metrics.push(entry); write(KEYS.metrics, metrics);
-  renderMetrics(); renderDashboard(); alert('Metrics saved.');
+  renderMetrics(); renderDashboard(); renderCharts(); alert('Metrics saved.');
 });
 
 function renderMetrics(){
@@ -330,12 +343,11 @@ $('#saveSettings').addEventListener('click', ()=>{
   settings.ffmHydrationPct = parseNum($('#sFFMHydration').value) ?? 73;
   write(KEYS.settings, settings);
   alert('Settings saved.');
-  renderDashboard();
+  renderDashboard(); renderCharts();
 });
 $('#resetAll').addEventListener('click', ()=>{
   if(confirm('Reset everything to factory settings? All data will be erased.')){
-    localStorage.clear();
-    location.reload();
+    localStorage.clear(); location.reload();
   }
 });
 
@@ -413,9 +425,7 @@ function renderDashboard(){
     : `<p>No workout logged yet.</p><button class="btn primary" id="goLog2">Log a workout</button>`;
   const go2 = $('#goLog2'); if(go2) go2.addEventListener('click', ()=> $('[data-tab="workout"]').click());
   renderStreak();
-  renderCharts();
 }
-
 function renderStreak(){
   const days = new Set(workouts.map(w=>w.date));
   let streak=0; let d = new Date();
@@ -425,11 +435,8 @@ function renderStreak(){
   }
   $('#streakBox').textContent = `🔥 ${streak}-day streak`;
   const box = $('#badges'); box.innerHTML='';
-  Object.entries(badges).forEach(([k,v])=>{
-    if(v) { const b = document.createElement('span'); b.className='badge'; b.textContent = v; box.appendChild(b); }
-  });
+  Object.entries(badges).forEach(([k,v])=>{ if(v) { const b = document.createElement('span'); b.className='badge'; b.textContent = v; box.appendChild(b); } });
 }
-
 function maybeAwardBadgesAfterSave(){
   if(!badges.first){ badges.first = '🏅 First Workout Logged'; }
   const days = new Set(workouts.map(w=>w.date));
@@ -456,10 +463,12 @@ function renderCharts(){
   });
   const weekLabels = Object.keys(byWeek).sort();
   const weekData = weekLabels.map(k=>byWeek[k]);
-  charts.volume = new Chart($('#chartVolume'), {
-    type:'bar', data:{labels:weekLabels, datasets:[{label:'Volume (lb×reps)', data:weekData}]},
-    options:{responsive:true, maintainAspectRatio:false}
-  });
+  if($('#chartVolume')){
+    charts.volume = new Chart($('#chartVolume'), {
+      type:'bar', data:{labels:weekLabels, datasets:[{label:'Volume (lb×reps)', data:weekData}]},
+      options:{responsive:true, maintainAspectRatio:false}
+    });
+  }
 
   // 1RM estimates (Epley) best per day
   const oneRM = {};
@@ -472,43 +481,48 @@ function renderCharts(){
     oneRM[w.date] = Math.max(oneRM[w.date]||0, best);
   });
   const d1 = Object.keys(oneRM).sort();
-  charts.onerm = new Chart($('#chart1RM'), {
-    type:'line', data:{labels:d1, datasets:[{label:'Best 1RM (lb, est)', data:d1.map(k=>Math.round(oneRM[k]))}]},
-    options:{responsive:true, maintainAspectRatio:false}
-  });
+  if($('#chart1RM')){
+    charts.onerm = new Chart($('#chart1RM'), {
+      type:'line', data:{labels:d1, datasets:[{label:'Best 1RM (lb, est)', data:d1.map(k=>Math.round(oneRM[k]))}]},
+      options:{responsive:true, maintainAspectRatio:false}
+    });
+  }
 
   // Body weight & body fat % trends
   const sortedM = metrics.slice().sort((a,b)=>a.date.localeCompare(b.date));
-  charts.body = new Chart($('#chartBody'), {
-    type:'line',
-    data:{
-      labels: sortedM.map(m=>m.date),
-      datasets:[
-        {label:'Weight (lb)', data: sortedM.map(m=>m.weight ?? null), yAxisID:'y'},
-        {label:'Body Fat %', data: sortedM.map(m=>m.bodyFat ?? null), yAxisID:'y1'}
-      ]
-    },
-    options:{
-      responsive:true, maintainAspectRatio:false,
-      scales:{ y:{ type:'linear', position:'left'}, y1:{ type:'linear', position:'right'} }
-    }
-  });
+  if($('#chartBody')){
+    charts.body = new Chart($('#chartBody'), {
+      type:'line',
+      data:{
+        labels: sortedM.map(m=>m.date),
+        datasets:[
+          {label:'Weight (lb)', data: sortedM.map(m=>m.weight ?? null), yAxisID:'y'},
+          {label:'Body Fat %', data: sortedM.map(m=>m.bodyFat ?? null), yAxisID:'y1'}
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        scales:{ y:{ type:'linear', position:'left'}, y1:{ type:'linear', position:'right'} }
+      }
+    });
+  }
 
   // PR history (heaviest weight per exercise)
   const prs = computePRs(true);
   const labels = Object.keys(prs);
   const data = labels.map(n=>prs[n].weight);
-  charts.pr = new Chart($('#chartPR'), {
-    type:'bar', data:{labels, datasets:[{label:'Heaviest Weight (lb)', data}]},
-    options:{responsive:true, maintainAspectRatio:false}
-  });
+  if($('#chartPR')){
+    charts.pr = new Chart($('#chartPR'), {
+      type:'bar', data:{labels, datasets:[{label:'Heaviest Weight (lb)', data}]},
+      options:{responsive:true, maintainAspectRatio:false}
+    });
+  }
 }
 
 function epley1RM(weight, reps){
   if(!weight || !reps) return 0;
   return weight * (1 + reps/30);
 }
-
 function isoYearWeek(isoDate){
   const d = new Date(isoDate);
   d.setHours(0,0,0,0);
@@ -516,7 +530,6 @@ function isoYearWeek(isoDate){
   const week1 = new Date(d.getFullYear(),0,4);
   return d.getFullYear() + '-W' + String(1 + Math.round(((d - week1) / 86400000 - 3 + (week1.getDay()+6)%7) / 7)).padStart(2,'0');
 }
-
 function computePRs(withDates=false){
   const map = {};
   workouts.forEach(w=>{
@@ -578,6 +591,7 @@ const DEMOS = [
 ];
 function renderDemos(){
   const lib = $('#demoLibrary');
+  if(!lib) return;
   lib.innerHTML = DEMOS.map(d=>`
     <div class="demo">
       <h4>${d.name}</h4>
@@ -593,7 +607,7 @@ function renderDemos(){
 }
 renderDemos();
 const demoModal = $('#demoModal');
-$('#closeDemo').addEventListener('click', ()=> demoModal.close());
+if($('#closeDemo')) $('#closeDemo').addEventListener('click', ()=> demoModal.close());
 function openDemo(name){
   const d = DEMOS.find(x=>x.name===name);
   $('#demoTitle').textContent = name;
@@ -601,10 +615,294 @@ function openDemo(name){
   demoModal.showModal();
 }
 
-// ---------- Charts need render on first load
-renderHistory(); renderDashboard(); renderMetrics();
+// ---------- Phase 2: Coach (rule-based generator)
+const EXERCISE_POOL = {
+  barbell: {
+    strength: [
+      {name:'Back Squat', reps:5, rpe:8}, {name:'Bench Press', reps:5, rpe:8},
+      {name:'Deadlift', reps:5, rpe:8}, {name:'Overhead Press', reps:5, rpe:8},
+      {name:'Barbell Row', reps:8, rpe:7}
+    ],
+    loss: [
+      {name:'Circuit (Row + KB + Pushups)', reps:12, rpe:7},
+      {name:'EMOM: Squat + OHP (light)', reps:10, rpe:7},
+      {name:'Barbell Complex (light)', reps:8, rpe:7}
+    ],
+    general: [
+      {name:'Bench Press', reps:8, rpe:7}, {name:'Back Squat', reps:8, rpe:7},
+      {name:'Barbell Row', reps:10, rpe:7}, {name:'RDL', reps:10, rpe:7},
+      {name:'OHP', reps:8, rpe:7}
+    ]
+  },
+  dumbbells: {
+    strength: [
+      {name:'DB Bench', reps:6, rpe:8}, {name:'Goblet Squat', reps:8, rpe:8},
+      {name:'DB Row', reps:10, rpe:8}, {name:'DB RDL', reps:8, rpe:8},
+      {name:'DB Shoulder Press', reps:8, rpe:8}
+    ],
+    loss: [
+      {name:'DB Circuit (Thruster/Row/Pushup)', reps:12, rpe:7},
+      {name:'HIIT DB + Jump Rope', reps:30, rpe:7},
+      {name:'Core + DB Carries', reps:40, rpe:7}
+    ],
+    general: [
+      {name:'DB Bench', reps:10, rpe:7}, {name:'Split Squat', reps:10, rpe:7},
+      {name:'DB Row', reps:12, rpe:7}, {name:'DB RDL', reps:12, rpe:7},
+      {name:'DB Press', reps:10, rpe:7}
+    ]
+  },
+  minimal: {
+    strength: [
+      {name:'Pistol Progressions', reps:6, rpe:8}, {name:'Push-up Weighted', reps:8, rpe:8},
+      {name:'Chin-up Weighted', reps:6, rpe:8}, {name:'Pike Press', reps:8, rpe:8},
+    ],
+    loss: [
+      {name:'Bodyweight Circuit', reps:15, rpe:7}, {name:'HIIT (BW + Sprints)', reps:30, rpe:7},
+      {name:'Core Circuit', reps:40, rpe:7}
+    ],
+    general: [
+      {name:'Push-ups', reps:12, rpe:7}, {name:'Split Squat (BW/DB)', reps:12, rpe:7},
+      {name:'Pull-ups/Rows', reps:8, rpe:7}, {name:'Hip Hinge (Good morning/band)', reps:15, rpe:7},
+      {name:'Core Plank', reps:60, rpe:6}
+    ]
+  }
+};
+function generatePlan(goal, days, equip){
+  const pool = EXERCISE_POOL[equip][goal];
+  const out = [];
+  for(let i=0;i<days;i++){
+    const daySets = [];
+    for(let j=0;j<Math.min(4, pool.length); j++){
+      const ex = pool[(i+j)%pool.length];
+      daySets.push({name: ex.name, reps: ex.reps, weight:'', rpe: ex.rpe});
+    }
+    out.push({title:`${goal.toUpperCase()} — Day ${i+1}`, sets: daySets});
+  }
+  return out;
+}
+function renderPlanPreview(){
+  const p = planState;
+  const pane = $('#planOut');
+  if(!pane) return;
+  if(!p || !p.length){ pane.innerHTML = '<span class="muted">No plan generated yet.</span>'; return; }
+  pane.innerHTML = p.map((d, idx)=> `<div><strong>${d.title}</strong><br>${d.sets.map(s=>`${s.name} ${s.reps} reps`).join(' • ')}</div>`).join('<hr style="border:0;border-top:1px solid #23242b;margin:.5rem 0">');
+}
+if($('#genPlan')){
+  $('#genPlan').addEventListener('click', ()=>{
+    const goal = $('#coachGoal').value;          // loss | strength | general
+    const days = parseInt($('#coachDays').value||4);
+    const equip = $('#coachEquip').value;        // barbell | dumbbells | minimal
+    planState = generatePlan(goal, days, equip);
+    write(KEYS.plan, planState);
+    renderPlanPreview();
+  });
+}
+if($('#loadToday')){
+  $('#loadToday').addEventListener('click', ()=>{
+    if(!planState || !planState.length){ alert('Generate a plan first.'); return; }
+    // choose day by weekday index (Mon=1..Sun=0) mapped to plan length
+    const idx = (new Date().getDay() + 6) % 7 % planState.length;
+    const day = planState[idx];
+    // load into workout form
+    $('[data-tab="workout"]').click();
+    setsBox.innerHTML='';
+    day.sets.forEach(s=> addSetRow(false, s));
+    $('#wDate').value = todayISO();
+    $('#wTitle').value = day.title;
+  });
+}
 
-// ---------- BMR/TDEE helper (expects metric inputs internally)
+// ---------- Phase 2: Muscle Readiness visualization
+// Map exercises to primary muscle groups (simple heuristic)
+const MUSCLE_MAP = [
+  {group:'Chest',  match:/bench|press|push-up|pushup|dip/i},
+  {group:'Back',   match:/row|pull|pulldown|chin|deadlift|rdl/i},
+  {group:'Legs',   match:/squat|lunge|leg|deadlift|rdl|pistol/i},
+  {group:'Arms',   match:/curl|triceps|tricep|biceps|bicep|chin|dip/i},
+  {group:'Core',   match:/core|plank|ab|crunch|carry|pallof|good morning/i}
+];
+const GROUPS = ['Chest','Back','Legs','Arms','Core'];
+function exerciseGroup(name){
+  const hit = MUSCLE_MAP.find(m => m.match.test(name));
+  return hit ? hit.group : 'Core'; // fallback
+}
+// Compute fatigue over past 5 days with exponential decay (half-life ~48h)
+function computeReadinessScores(){
+  const now = new Date();
+  const windowDays = 5;
+  const halfLifeHrs = 48;
+  const k = Math.log(2)/ (halfLifeHrs); // decay/hour
+  const base = Object.fromEntries(GROUPS.map(g=>[g, 0]));
+
+  workouts.forEach(w=>{
+    const dt = new Date(w.date);
+    const diffHours = (now - dt) / 36e5;
+    if(diffHours < 24*windowDays && diffHours >= 0){
+      const decay = Math.exp(-k * diffHours);
+      w.sets.forEach(s=>{
+        const g = exerciseGroup(s.name||'');
+        // training stress ~ weight*reps normalized
+        const stress = ((s.weight||0) * (s.reps||0)) / 1000; // heuristic scaling
+        base[g] += stress * decay;
+      });
+    }
+  });
+  // Convert stress to readiness 0..1 (lower stress -> more fresh)
+  const maxStress = Math.max(0.001, Math.max(...Object.values(base)));
+  const readiness = {};
+  GROUPS.forEach(g=>{
+    const norm = base[g]/maxStress;           // 0..1
+    const fresh = 1 - Math.min(1, norm);      // 1..0
+    readiness[g] = fresh;                     // 1 fresh, 0 fatigued
+  });
+  return readiness;
+}
+function colorForReadiness(x){
+  // x: 0..1 -> fatigued(red) to fresh(green)
+  if(x >= 0.66) return '#3fc29a';
+  if(x >= 0.33) return '#ffd43b';
+  return '#ff6b6b';
+}
+function renderReadiness(){
+  const svg = $('#readiness'); if(!svg) return;
+  const legend = $('#readinessLegend');
+  legend.innerHTML = `
+    <span><span class="legend-dot fresh"></span>Fresh</span>
+    <span><span class="legend-dot moderate"></span>Moderate</span>
+    <span><span class="legend-dot fatigued"></span>Fatigued</span>`;
+  svg.innerHTML = '';
+  const scores = computeReadinessScores();
+  // draw 5 circles evenly
+  GROUPS.forEach((g, i)=>{
+    const cx = 50 + i * 50; const cy = 70;
+    const r = 22;
+    const color = colorForReadiness(scores[g]||0.5);
+    const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    circle.setAttribute('cx', cx); circle.setAttribute('cy', cy);
+    circle.setAttribute('r', r); circle.setAttribute('fill', color);
+    svg.appendChild(circle);
+    const text = document.createElementNS('http://www.w3.org/2000/svg','text');
+    text.textContent = g[0];
+    text.setAttribute('x', cx); text.setAttribute('y', cy+5);
+    text.setAttribute('fill', '#fff'); text.setAttribute('text-anchor','middle');
+    text.setAttribute('font-size','12');
+    svg.appendChild(text);
+  });
+}
+
+// ---------- Phase 2: Goals
+if($('#saveGoals')){
+  $('#saveGoals').addEventListener('click', ()=>{
+    goals = {
+      weight: parseNum($('#gWeight').value),
+      date: $('#gDate').value,
+      lift: $('#gLiftName').value.trim(),
+      lift1RM: parseNum($('#gLift1RM').value)
+    };
+    write(KEYS.goals, goals);
+    updateGoalProgress();
+    alert('Goals saved.');
+  });
+}
+function updateGoalProgress(){
+  const box = $('#goalsProgress'); if(!box) return;
+  const s = settings;
+  if(!goals || (!goals.weight && !goals.lift1RM)){ box.innerHTML = '<p class="muted">No goals set yet.</p>'; return; }
+
+  let html = '';
+  if(goals.weight){
+    const cur = (latestMetrics().weight ?? s.weightLb) || s.weightLb;
+    const diff = goals.weight - cur;
+    const pct = Math.min(100, Math.max(0, (goals.weight===0?0: ( (goals.weight>cur ? cur/goals.weight : goals.weight/cur) * 100 )))).toFixed(1);
+    const rem = Math.abs(diff).toFixed(1);
+    html += `<p>Current weight: <strong>${cur} lb</strong> → Goal: <strong>${goals.weight} lb</strong> (${diff>0?'gain':'loss'} remaining: <strong>${rem} lb</strong>)</p>`;
+    if(goals.date){
+      const daysLeft = Math.ceil((new Date(goals.date) - new Date())/86400000);
+      if(isFinite(daysLeft)) html += `<p>Target date: ${goals.date} (${daysLeft>=0?daysLeft+' days remaining':'past due'})</p>`;
+    }
+    html += progressBar(cur, goals.weight, 'lb');
+  }
+  if(goals.lift && goals.lift1RM){
+    // estimate best 1RM to date
+    const prs = computePRs(true);
+    const best = prs[goals.lift]?.weight || 0;
+    html += `<p>${goals.lift} 1RM: current <strong>${Math.round(best)} lb</strong> → goal <strong>${goals.lift1RM} lb</strong></p>`;
+    html += progressBar(best, goals.lift1RM, 'lb');
+  }
+  box.innerHTML = html;
+}
+function progressBar(current, target, unit){
+  const pct = Math.max(0, Math.min(100, (current/Math.max(1,target))*100));
+  return `
+  <div style="background:#11131a;border:1px solid #22232a;border-radius:10px;overflow:hidden;height:14px;margin:.4rem 0">
+    <div style="height:14px;width:${pct}%;background:#63e6be"></div>
+  </div>
+  <small class="muted">${fmt(current)} ${unit} / ${fmt(target)} ${unit} (${pct.toFixed(1)}%)</small>`;
+}
+
+// ---------- Phase 2: Community (local-only, opt-in, share/import)
+function renderFeed(){
+  $('#cName').value = community.name || '';
+  $('#cOptIn').value = community.optIn || 'off';
+  const feedBox = $('#feed'); if(!feedBox) return;
+  feedBox.innerHTML = (community.feed||[]).map(item => `
+    <div class="item">
+      <div class="author">${escapeHtml(item.author||'Friend')}</div>
+      <div class="content">${escapeHtml(item.text||'')}</div>
+    </div>`).join('') || '<p class="muted">No posts yet.</p>';
+}
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+if($('#cOptIn')) $('#cOptIn').addEventListener('change', e=>{
+  community.optIn = e.target.value; write(KEYS.community, community);
+});
+if($('#cName')) $('#cName').addEventListener('input', e=>{
+  community.name = e.target.value; write(KEYS.community, community);
+});
+if($('#cShare')) $('#cShare').addEventListener('click', async ()=>{
+  // Share latest summary (no PII besides chosen name)
+  const latestW = workouts.slice().sort((a,b)=>b.date.localeCompare(a.date))[0];
+  const latestM = latestMetrics();
+  const summary = {
+    name: community.name || 'Anonymous',
+    lastWorkout: latestW ? {date: latestW.date, title: latestW.title, volume: latestW.sets.reduce((t,s)=>t+(s.weight||0)*(s.reps||0),0)} : null,
+    weight: latestM.weight ?? settings.weightLb,
+    bf: latestM.bodyFat ?? null
+  };
+  const code = btoa(unescape(encodeURIComponent(JSON.stringify(summary))));
+  try {
+    await navigator.clipboard.writeText(code);
+    alert('Share code copied to clipboard!');
+  } catch {
+    prompt('Copy your share code:', code);
+  }
+});
+if($('#cImport')) $('#cImport').addEventListener('click', ()=>{
+  const txt = $('#cImportText').value.trim();
+  if(!txt) return alert('Paste a share code first.');
+  try{
+    const data = JSON.parse(decodeURIComponent(escape(atob(txt))));
+    community.feed = community.feed || [];
+    community.feed.unshift({
+      author: data.name || 'Friend',
+      text: data.lastWorkout
+        ? `${data.name||'Friend'} trained "${data.lastWorkout.title}" on ${data.lastWorkout.date} (volume ${fmt(data.lastWorkout.volume)}). Weight: ${data.weight??'?'} lb${data.bf?`, ~${data.bf}% BF`:''}.`
+        : `${data.name||'Friend'} shared stats. Weight: ${data.weight??'?'} lb${data.bf?`, ~${data.bf}% BF`:''}.`
+    });
+    // keep last 50
+    community.feed = community.feed.slice(0,50);
+    write(KEYS.community, community);
+    renderFeed();
+    $('#cImportText').value='';
+  } catch(e){
+    alert('Invalid code!');
+  }
+});
+
+// ---------- initial render
+renderHistory(); renderDashboard(); renderCharts(); renderMetrics();
+renderPlanPreview(); renderReadiness(); renderFeed(); updateGoalProgress();
+
+// ---------- BMR/TDEE (metric internal)
 function calcBmrTdee(sex, age, heightCm, weightKg){
   let bmr;
   if(sex === 'male') bmr = 10*weightKg + 6.25*heightCm - 5*age + 5;
