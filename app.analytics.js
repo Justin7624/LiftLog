@@ -379,30 +379,38 @@
       `);
     }
 
-    // Lift 1RM goal
-    if (g.liftName && g.lift1RM) {
-      // estimate current best 1RM from history
-      let best = 0;
+    // Multiple lift goals (show up to 2 for snapshot)
+    if (state.goals?.lifts?.length) {
+      const lifts = state.goals.lifts.slice(0, 2);
+
+      // Build current best (Epley) map from history
+      const bestMap = {};
       state.workouts.forEach((w) =>
         (w.sets || []).forEach((s) => {
-          if (
-            (s.name || '').toLowerCase() === g.liftName.toLowerCase() &&
-            s.weight &&
-            s.reps
-          ) {
-            best = Math.max(best, Math.round(epley1RM(s.weight, s.reps)));
+          const nm = (s.name || '').trim().toLowerCase();
+          if (nm && s.weight && s.reps) {
+            const est = s.weight * (1 + s.reps / 30);
+            bestMap[nm] = Math.max(bestMap[nm] || 0, est);
           }
         })
       );
-      const pct = Math.max(0, Math.min(100, (best / g.lift1RM) * 100));
-      rows.push(`
-        <div><strong>${g.liftName} 1RM:</strong> ${fmt(best)} lb → ${fmt(
-        g.lift1RM
-      )} lb</div>
-        <div style="height:8px; background:#1f2026; border-radius:999px; overflow:hidden; margin:.35rem 0">
-          <div style="width:${pct.toFixed(0)}%; height:100%"></div>
-        </div>
-      `);
+
+      lifts.forEach(({ name, target1RM }) => {
+        const key = (name || '').trim().toLowerCase();
+        const best = Math.round(bestMap[key] || 0);
+        const pct = Math.max(
+          0,
+          Math.min(100, (best / (target1RM || 1)) * 100)
+        );
+        rows.push(`
+          <div><strong>${name} 1RM:</strong> ${fmt(best)} lb → ${fmt(
+          target1RM
+        )} lb</div>
+          <div style="height:8px; background:#1f2026; border-radius:999px; overflow:hidden; margin:.35rem 0">
+            <div style="width:${pct.toFixed(0)}%; height:100%"></div>
+          </div>
+        `);
+      });
     }
 
     el.innerHTML = rows.length
