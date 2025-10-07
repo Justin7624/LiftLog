@@ -111,7 +111,7 @@
     return byLift;
   }
 
-  // UPDATED: handles missing date adapter by falling back to category scale
+  // Handles missing date adapter by falling back to category scale
   function render1RMChart() {
     const ctx = $('#chart1RM');
     if (!ctx) return;
@@ -152,7 +152,7 @@
       .map((lift) => {
         const map = Object.fromEntries(byLift[lift].map((p) => [p.x, p.y]));
         return { label: lift, data: labels.map((d) => map[d] ?? null) };
-        });
+      });
 
     makeChart(ctx, {
       type: 'line',
@@ -247,7 +247,7 @@
   // ------------------------------
   // Weight projection (Calories tab)
   // ------------------------------
-  function calcProjection(days = 60) {
+  function calcProjection(days = 70) {
     const s = state.settings;
     const startWeight = latestWeightLb();
     if (!startWeight) return null;
@@ -270,11 +270,11 @@
       }[lvl] || 1.55;
     })();
 
-    const target = Math.round(bmr * mult);
-    const cals = parseNum($('#caloriesInput')?.value) || target;
+    const tdee = Math.round(bmr * mult);
+    const cals = parseNum($('#caloriesInput')?.value) || tdee;
 
-    const dailyBalance = cals - target; // positive = surplus
-    const lbPerDay = dailyBalance / 3500; // 3500 kcal per lb (simple model)
+    const dailyBalance = cals - tdee;        // +surplus / -deficit
+    const lbPerDay = dailyBalance / 3500;    // ~3500 kcal per lb
 
     const labels = [];
     const series = [];
@@ -287,7 +287,11 @@
       series.push(Number(w.toFixed(2)));
       w += lbPerDay;
     }
-    return { labels, series, tdee: target };
+    const endWeight = Number(series[series.length - 1].toFixed(2));
+    const deltaLb = Number((endWeight - startWeight).toFixed(2)); // negative = loss
+    const ratePerWeek = Number((lbPerDay * 7).toFixed(2));
+
+    return { labels, series, tdee, startWeight, endWeight, deltaLb, ratePerWeek, days };
   }
 
   function renderProjection() {
@@ -301,11 +305,26 @@
         'Add weight in Body Metrics (or Settings) to estimate projections.';
       return;
     }
-    box.innerHTML = `Projected trend based on <strong>${
-      $('#caloriesInput')?.value || Math.round(proj.tdee)
-    } kcal/day</strong>. Estimated TDEE: <strong>${Math.round(
-      proj.tdee
-    )} kcal</strong>.`;
+
+    const humanDelta =
+      (proj.deltaLb < 0
+        ? 'Estimated loss'
+        : proj.deltaLb > 0
+        ? 'Estimated gain'
+        : 'No change') +
+      ` over ${proj.days} days: <strong>${Math.abs(proj.deltaLb).toFixed(
+        1
+      )} lb</strong> (≈ ${
+        proj.ratePerWeek < 0 ? '-' : proj.ratePerWeek > 0 ? '+' : ''
+      }${Math.abs(proj.ratePerWeek).toFixed(1)} lb/week)`;
+
+    box.innerHTML = `
+      Projected trend based on <strong>${
+        $('#caloriesInput')?.value || Math.round(proj.tdee)
+      } kcal/day</strong>. Estimated TDEE:
+      <strong>${Math.round(proj.tdee)} kcal</strong>.<br>
+      ${humanDelta}.
+    `;
 
     makeChart(ctx, {
       type: 'line',
